@@ -4,6 +4,7 @@ import { Program } from '../types/content'
 export class ProgramService {
   private static instance: ProgramService
   private isSupabaseEnabled = false
+  private connectionChecked = false
 
   static getInstance(): ProgramService {
     if (!ProgramService.instance) {
@@ -13,22 +14,44 @@ export class ProgramService {
   }
 
   constructor() {
-    this.checkSupabaseConnection()
+    this.initializeConnection()
+  }
+
+  private async initializeConnection() {
+    await this.checkSupabaseConnection()
+    this.connectionChecked = true
   }
 
   private async checkSupabaseConnection() {
     try {
-      const { error } = await supabase.from('programs').select('count').limit(1)
-      this.isSupabaseEnabled = !error || error.code === 'PGRST116' // Tabla no existe pero conexión OK
-      console.log('Supabase habilitado:', this.isSupabaseEnabled)
+      const { data, error } = await supabase
+        .from('programs')
+        .select('*')
+        .limit(1)
+      
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // Tabla no existe, pero conexión OK
+          this.isSupabaseEnabled = true
+        } else {
+          this.isSupabaseEnabled = false
+        }
+      } else {
+        this.isSupabaseEnabled = true
+      }
     } catch (error) {
-      console.log('Usando localStorage como fallback')
       this.isSupabaseEnabled = false
     }
   }
 
   // Obtener todos los programas
   async getPrograms(): Promise<Program[]> {
+    // Asegurar que la conexión esté verificada
+    if (!this.connectionChecked) {
+      await this.checkSupabaseConnection()
+      this.connectionChecked = true
+    }
+    
     if (this.isSupabaseEnabled) {
       try {
         const { data, error } = await supabase
@@ -37,13 +60,13 @@ export class ProgramService {
           .order('created_at', { ascending: false })
 
         if (error) {
-          console.error('Error obteniendo programas de Supabase:', error)
           return this.getLocalPrograms()
         }
 
-        return data || []
+        // Mapear datos de Supabase a nuestro formato
+        const mappedPrograms = data?.map(item => this.mapSupabaseToProgram(item)) || []
+        return mappedPrograms
       } catch (error) {
-        console.error('Error conectando a Supabase:', error)
         return this.getLocalPrograms()
       }
     }
@@ -74,13 +97,11 @@ export class ProgramService {
           .single()
 
         if (error) {
-          console.error('Error creando programa en Supabase:', error)
           return this.createLocalProgram(program)
         }
 
         return { success: true, data: this.mapSupabaseToProgram(data) }
       } catch (error) {
-        console.error('Error conectando a Supabase:', error)
         return this.createLocalProgram(program)
       }
     }
@@ -110,13 +131,11 @@ export class ProgramService {
           .single()
 
         if (error) {
-          console.error('Error actualizando programa en Supabase:', error)
           return this.updateLocalProgram(program)
         }
 
         return { success: true, data: this.mapSupabaseToProgram(data) }
       } catch (error) {
-        console.error('Error conectando a Supabase:', error)
         return this.updateLocalProgram(program)
       }
     }
@@ -134,13 +153,11 @@ export class ProgramService {
           .eq('id', programId)
 
         if (error) {
-          console.error('Error eliminando programa de Supabase:', error)
           return this.deleteLocalProgram(programId)
         }
 
         return { success: true }
       } catch (error) {
-        console.error('Error conectando a Supabase:', error)
         return this.deleteLocalProgram(programId)
       }
     }
@@ -154,7 +171,6 @@ export class ProgramService {
       const saved = localStorage.getItem('gestorplayer-programs')
       return saved ? JSON.parse(saved) : []
     } catch (error) {
-      console.error('Error cargando programas de localStorage:', error)
       return []
     }
   }
