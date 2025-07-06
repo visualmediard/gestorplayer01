@@ -5,10 +5,16 @@ export interface MediaContent {
   file: File | null;
   url?: string;
   duration?: number;
-  dailyFrequency: number;
-  isUnlimited: boolean;
   size?: number;
   lastModified?: number;
+  // Configuración de repeticiones
+  dailyLimit: number; // Cuántas veces por día (-1 = ilimitado)
+  isUnlimited: boolean; // Repeticiones ilimitadas
+  // Control de reproducción diaria
+  dailyCount: number; // Cuántas veces se reprodujo hoy
+  lastPlayDate: string; // Fecha de la última reproducción
+  // Estado de reproducción
+  isAvailableToday: boolean; // Si está disponible para reproducir hoy
 }
 
 export interface Content {

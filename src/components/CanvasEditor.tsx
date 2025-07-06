@@ -1,7 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Zone, CanvasSettings, Program, Content } from '../types/content';
-import { Plus, Grid, Settings, Upload, Play, Pause, X, ChevronUp, ChevronDown, Image, Video, FileText, ArrowLeft } from 'lucide-react';
+import { Zone, CanvasSettings, Program, Content, MediaContent } from '../types/content';
+import { Plus, Grid, Settings, Upload, Play, Pause, X, ChevronUp, ChevronDown, Image, Video, FileText, ArrowLeft, Infinity, RotateCcw } from 'lucide-react';
 import { generateId } from '../lib/utils';
+import { RepetitionService } from '../services/repetitionService';
+import { RepetitionConfigDialog } from './RepetitionConfigDialog';
 
 interface CanvasEditorProps {
   program: Program;
@@ -39,6 +41,11 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
   const [isPlaying, setIsPlaying] = useState<{ [zoneId: string]: boolean }>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Estados para repeticiones
+  const [repetitionDialogOpen, setRepetitionDialogOpen] = useState(false);
+  const [selectedContentForRepetition, setSelectedContentForRepetition] = useState<MediaContent | null>(null);
+  const repetitionService = RepetitionService.getInstance();
+
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
 
@@ -47,22 +54,29 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
     const interval = setInterval(() => {
       zones.forEach(zone => {
         if (zone.content.length > 1) {
-          const currentIndex = currentContentIndex[zone.id] || 0;
-          const nextIndex = (currentIndex + 1) % zone.content.length;
+          // Filtrar contenidos disponibles para reproducir hoy
+          const availableContent = zone.content.filter(content => 
+            repetitionService.canPlayToday(content.id)
+          );
           
-          // Manejar transición suave
-          handleContentTransition(zone.id);
-          
-          setCurrentContentIndex(prev => ({
-            ...prev,
-            [zone.id]: nextIndex
-          }));
+          if (availableContent.length > 0) {
+            const currentIndex = currentContentIndex[zone.id] || 0;
+            const nextIndex = (currentIndex + 1) % availableContent.length;
+            
+            // Manejar transición suave
+            handleContentTransition(zone.id);
+            
+            setCurrentContentIndex(prev => ({
+              ...prev,
+              [zone.id]: nextIndex
+            }));
+          }
         }
       });
     }, 8000); // Cambia cada 8 segundos para dar más tiempo de visualización
 
     return () => clearInterval(interval);
-  }, [zones, currentContentIndex]);
+  }, [zones, currentContentIndex, repetitionService]);
 
   // Auto-reproducir videos cuando se carga contenido
   useEffect(() => {
@@ -105,8 +119,26 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
   // Función para obtener el contenido actual de una zona
   const getCurrentContent = (zone: Zone) => {
     if (zone.content.length === 0) return null;
+    
+    // Filtrar contenidos disponibles para reproducir hoy
+    const availableContent = zone.content.filter(content => 
+      repetitionService.canPlayToday(content.id)
+    );
+    
+    if (availableContent.length === 0) {
+      // Si no hay contenido disponible, mostrar el primero pero marcarlo como no disponible
+      return zone.content[0] || null;
+    }
+    
     const index = currentContentIndex[zone.id] || 0;
-    return zone.content[index] || zone.content[0];
+    const content = availableContent[index] || availableContent[0];
+    
+    // Registrar la reproducción solo una vez por cambio de contenido
+    if (content && isPlaying[zone.id]) {
+      repetitionService.recordPlayback(content.id);
+    }
+    
+    return content;
   };
 
   // Función para reproducir/pausar video
@@ -397,6 +429,41 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
       default:
         return <FileText className="w-4 h-4" />;
     }
+  };
+
+  // Funciones para manejar repeticiones
+  const openRepetitionDialog = (content: Content) => {
+    const mediaContent: MediaContent = {
+      id: content.id,
+      name: content.name,
+      type: content.type as 'image' | 'video',
+      file: null,
+      url: content.url,
+      size: 0,
+      lastModified: Date.now(),
+      dailyLimit: -1,
+      isUnlimited: true,
+      dailyCount: 0,
+      lastPlayDate: new Date().toISOString().split('T')[0],
+      isAvailableToday: true
+    };
+    
+    setSelectedContentForRepetition(mediaContent);
+    setRepetitionDialogOpen(true);
+  };
+
+  const closeRepetitionDialog = () => {
+    setRepetitionDialogOpen(false);
+    setSelectedContentForRepetition(null);
+  };
+
+  const handleRepetitionSave = (contentId: string, limit: number, isUnlimited: boolean) => {
+    // La lógica ya está manejada en el servicio
+    // Actualizar la UI puede ser necesario si hay cambios visuales
+  };
+
+  const getRepetitionInfo = (contentId: string) => {
+    return repetitionService.getPlaybackInfo(contentId);
   };
 
   // Manejar click en el canvas
@@ -895,54 +962,110 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
                 </div>
               ) : (
                 <div className="p-4 space-y-2">
-                  {selectedZone.content.map((content, index) => (
-                    <div
-                      key={content.id}
-                      className="flex items-center space-x-3 p-3 bg-white rounded-lg shadow-sm border border-gray-200 hover:shadow-md transition-shadow"
-                    >
-                      <div className="flex-shrink-0 p-2 bg-corporate-light-blue/20 rounded-lg">
-                        {getContentIcon(content.type)}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-corporate-charcoal-gray truncate">
-                          {content.name}
-                        </p>
-                        <p className="text-xs text-corporate-charcoal-gray/70">
-                          {content.type === 'video' ? 'Video' : 'Imagen'} • {content.duration}s
-                        </p>
-                      </div>
+                  {selectedZone.content.map((content, index) => {
+                    const repetitionInfo = getRepetitionInfo(content.id);
+                    
+                    return (
+                      <div
+                        key={content.id}
+                        className={`p-3 bg-white rounded-lg shadow-sm border transition-shadow ${
+                          repetitionInfo.canPlay 
+                            ? 'border-gray-200 hover:shadow-md' 
+                            : 'border-orange-200 bg-orange-50/50'
+                        }`}
+                      >
+                        <div className="flex items-center space-x-3">
+                          <div className="flex-shrink-0 p-2 bg-corporate-light-blue/20 rounded-lg">
+                            {getContentIcon(content.type)}
+                          </div>
+                          
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-corporate-charcoal-gray truncate">
+                              {content.name}
+                            </p>
+                            <div className="flex items-center space-x-2">
+                              <p className="text-xs text-corporate-charcoal-gray/70">
+                                {content.type === 'video' ? 'Video' : 'Imagen'} • {content.duration}s
+                              </p>
+                              {/* Indicador de repeticiones */}
+                              <div className={`text-xs px-2 py-1 rounded-full flex items-center space-x-1 ${
+                                repetitionInfo.isUnlimited 
+                                  ? 'bg-blue-100 text-blue-700'
+                                  : repetitionInfo.canPlay
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-orange-100 text-orange-700'
+                              }`}>
+                                {repetitionInfo.isUnlimited ? (
+                                  <>
+                                    <Infinity className="w-3 h-3" />
+                                    <span>Ilimitado</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <RotateCcw className="w-3 h-3" />
+                                    <span>{repetitionInfo.played}/{repetitionInfo.limit}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
 
-                      <div className="flex items-center space-x-1">
-                        <button
-                          onClick={() => moveContent(content.id, 'up')}
-                          disabled={index === 0}
-                          className="p-1 text-corporate-charcoal-gray hover:text-corporate-dark-blue disabled:opacity-30 transition-colors"
-                        >
-                          <ChevronUp className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => moveContent(content.id, 'down')}
-                          disabled={index === selectedZone.content.length - 1}
-                          className="p-1 text-corporate-charcoal-gray hover:text-corporate-dark-blue disabled:opacity-30 transition-colors"
-                        >
-                          <ChevronDown className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => removeContent(content.id)}
-                          className="p-1 text-corporate-soft-red hover:text-red-600 transition-colors"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                          <div className="flex items-center space-x-1">
+                            <button
+                              onClick={() => openRepetitionDialog(content)}
+                              className="p-1 text-corporate-charcoal-gray hover:text-corporate-dark-blue transition-colors"
+                              title="Configurar repeticiones"
+                            >
+                              <Settings className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => moveContent(content.id, 'up')}
+                              disabled={index === 0}
+                              className="p-1 text-corporate-charcoal-gray hover:text-corporate-dark-blue disabled:opacity-30 transition-colors"
+                            >
+                              <ChevronUp className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => moveContent(content.id, 'down')}
+                              disabled={index === selectedZone.content.length - 1}
+                              className="p-1 text-corporate-charcoal-gray hover:text-corporate-dark-blue disabled:opacity-30 transition-colors"
+                            >
+                              <ChevronDown className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => removeContent(content.id)}
+                              className="p-1 text-corporate-soft-red hover:text-red-600 transition-colors"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                        
+                        {/* Estado de repeticiones */}
+                        {!repetitionInfo.canPlay && (
+                          <div className="mt-2 text-xs text-orange-700 bg-orange-100 px-2 py-1 rounded flex items-center space-x-1">
+                            <span>⚠️ Límite diario alcanzado</span>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
           </div>
         )}
       </div>
+
+      {/* Dialog de configuración de repeticiones */}
+      {selectedContentForRepetition && (
+        <RepetitionConfigDialog
+          content={selectedContentForRepetition}
+          isOpen={repetitionDialogOpen}
+          onClose={closeRepetitionDialog}
+          onSave={handleRepetitionSave}
+        />
+      )}
     </div>
   );
 };
