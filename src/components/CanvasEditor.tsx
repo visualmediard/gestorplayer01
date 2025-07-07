@@ -170,6 +170,23 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
     });
   }, [currentContentIndex, zones, isPlaying]);
 
+  // Efecto para escuchar cambios de sincronización
+  useEffect(() => {
+    const handleSyncChange = () => {
+      console.log('🔄 Cambios detectados en sincronización, actualizando interfaz...');
+      // Forzar re-renderizado del componente
+      setCurrentContentIndex(prev => ({ ...prev }));
+    };
+
+    // Suscribirse a cambios de sincronización
+    repetitionService.onSyncChange(handleSyncChange);
+
+    // Limpiar suscripción al desmontar
+    return () => {
+      repetitionService.removeSyncCallback(handleSyncChange);
+    };
+  }, [repetitionService]);
+
   // Función para obtener el contenido actual de una zona
   const getCurrentContent = (zone: Zone) => {
     if (zone.content.length === 0) return null;
@@ -180,8 +197,9 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
     );
     
     if (availableContent.length === 0) {
-      // Si no hay contenido disponible, mostrar el primero pero marcarlo como no disponible
-      return zone.content[0] || null;
+      // Si no hay contenido disponible, NO mostrar nada
+      console.log(`🚫 Zona ${zone.name}: No hay contenido disponible para reproducir hoy`);
+      return null;
     }
     
     const index = currentContentIndex[zone.id] || 0;

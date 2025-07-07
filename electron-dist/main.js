@@ -43,9 +43,8 @@ function createWindow() {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
-            webSecurity: true,
-            allowRunningInsecureContent: false,
-            // Configurar CSP para permitir Supabase
+            webSecurity: false, // Deshabilitar webSecurity para permitir cargar archivos locales
+            allowRunningInsecureContent: true,
             additionalArguments: [
                 '--disable-web-security',
                 '--disable-features=VizDisplayCompositor'
@@ -59,11 +58,11 @@ function createWindow() {
         callback({
             responseHeaders: {
                 ...details.responseHeaders,
-                'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://zspeoizdglawqvduxhbg.supabase.co; connect-src 'self' https://zspeoizdglawqvduxhbg.supabase.co wss://zspeoizdglawqvduxhbg.supabase.co; img-src 'self' data: blob: https://zspeoizdglawqvduxhbg.supabase.co; media-src 'self' data: blob: https://zspeoizdglawqvduxhbg.supabase.co; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+                'Content-Security-Policy': "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: file:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://zspeoizdglawqvduxhbg.supabase.co; connect-src 'self' https://zspeoizdglawqvduxhbg.supabase.co wss://zspeoizdglawqvduxhbg.supabase.co; img-src 'self' data: blob: file: https://zspeoizdglawqvduxhbg.supabase.co; media-src 'self' data: blob: file: https://zspeoizdglawqvduxhbg.supabase.co; style-src 'self' 'unsafe-inline' file:; font-src 'self' data: file:;"
             }
         });
     });
-    // Usar path absoluto para cargar el build de producción de React
+    // Cargar directamente el archivo HTML
     win.loadFile(path.resolve(__dirname, '../dist/index.html'));
 }
 electron_1.app.whenReady().then(createWindow);

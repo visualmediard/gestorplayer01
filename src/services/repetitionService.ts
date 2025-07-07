@@ -1,3 +1,5 @@
+import { supabase } from '../config/supabase'
+
 interface RepetitionData {
   contentId: string;
   dailyCount: number;
@@ -9,6 +11,10 @@ interface RepetitionData {
 export class RepetitionService {
   private static instance: RepetitionService;
   private storageKey = 'gestorplayer-repetitions';
+  private isSupabaseEnabled = false;
+  private syncInterval: NodeJS.Timeout | null = null;
+  private lastSyncTime: number = 0;
+  private syncCallbacks: Array<() => void> = [];
 
   static getInstance(): RepetitionService {
     if (!RepetitionService.instance) {
@@ -69,11 +75,14 @@ export class RepetitionService {
   }
 
   // Configurar límite diario para un contenido
-  setDailyLimit(contentId: string, limit: number, isUnlimited: boolean = false): void {
+  async setDailyLimit(contentId: string, limit: number, isUnlimited: boolean = false): Promise<void> {
     this.updateRepetitionData(contentId, {
       dailyLimit: isUnlimited ? -1 : limit,
       isUnlimited
     });
+    
+    // Sincronizar con Supabase
+    await this.syncLimitChange(contentId);
   }
 
   // Verificar si un contenido puede reproducirse hoy
@@ -106,7 +115,7 @@ export class RepetitionService {
   }
 
   // Registrar una reproducción
-  recordPlayback(contentId: string): void {
+  async recordPlayback(contentId: string): Promise<void> {
     const data = this.getRepetitionData(contentId);
     const today = this.getCurrentDate();
     
@@ -135,6 +144,9 @@ export class RepetitionService {
         console.log(`🔢 Reproducción registrada - ID: ${contentId}, Contador: ${newCount}, Límite: ${data.isUnlimited ? 'Ilimitado' : data.dailyLimit}`);
       }
     }
+    
+    // Sincronizar con Supabase después de registrar la reproducción
+    await this.syncLimitChange(contentId);
   }
 
   // Obtener información de reproducción para un contenido
@@ -273,5 +285,259 @@ export class RepetitionService {
     console.log(`   🟢 Activos hoy: ${stats.activeToday}`);
     console.log(`   🔴 Completados hoy: ${stats.completedToday}`);
     console.log('='.repeat(50));
+  }
+
+  // ===== FUNCIONES DE SINCRONIZACIÓN CON SUPABASE =====
+
+  // Verificar conexión con Supabase
+  private async checkSupabaseConnection(): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('repetition_limits')
+        .select('count')
+        .limit(1)
+      
+      if (error && error.code === 'PGRST116') {
+        // Tabla no existe
+        this.isSupabaseEnabled = false
+        console.warn('⚠️ Tabla repetition_limits no existe en Supabase')
+      } else if (error) {
+        this.isSupabaseEnabled = false
+        console.warn('⚠️ Error de conexión con Supabase:', error)
+      } else {
+        this.isSupabaseEnabled = true
+        console.log('✅ Conexión con Supabase establecida')
+      }
+    } catch (error) {
+      this.isSupabaseEnabled = false
+      console.warn('⚠️ Error verificando conexión con Supabase:', error)
+    }
+  }
+
+  // Sincronizar límites locales con Supabase
+  async syncToSupabase(): Promise<void> {
+    await this.checkSupabaseConnection()
+    
+    if (!this.isSupabaseEnabled) {
+      console.log('ℹ️ Supabase no disponible, saltando sincronización')
+      return
+    }
+
+    try {
+      const localData = this.loadRepetitionData()
+      
+      if (localData.length === 0) {
+        console.log('ℹ️ No hay datos locales para sincronizar')
+        return
+      }
+
+      console.log(`🔄 Sincronizando ${localData.length} límites con Supabase...`)
+
+      for (const data of localData) {
+        const { error } = await supabase
+          .from('repetition_limits')
+          .upsert({
+            content_id: data.contentId,
+            daily_limit: data.dailyLimit,
+            is_unlimited: data.isUnlimited,
+            daily_count: data.dailyCount,
+            last_play_date: data.lastPlayDate
+          }, {
+            onConflict: 'content_id'
+          })
+
+        if (error) {
+          console.error(`❌ Error sincronizando límite para ${data.contentId}:`, error)
+        } else {
+          console.log(`✅ Límite sincronizado para ${data.contentId}`)
+        }
+      }
+
+      console.log('✅ Sincronización con Supabase completada')
+    } catch (error) {
+      console.error('❌ Error durante la sincronización:', error)
+    }
+  }
+
+  // Cargar límites desde Supabase
+  async loadFromSupabase(): Promise<void> {
+    await this.checkSupabaseConnection()
+    
+    if (!this.isSupabaseEnabled) {
+      console.log('ℹ️ Supabase no disponible, saltando carga')
+      return
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('repetition_limits')
+        .select('*')
+
+      if (error) {
+        console.error('❌ Error cargando límites desde Supabase:', error)
+        return
+      }
+
+      if (!data || data.length === 0) {
+        console.log('ℹ️ No hay límites en Supabase')
+        return
+      }
+
+      // Convertir formato de Supabase a formato local
+      const localFormat = data.map(item => ({
+        contentId: item.content_id,
+        dailyLimit: item.daily_limit,
+        isUnlimited: item.is_unlimited,
+        dailyCount: item.daily_count,
+        lastPlayDate: item.last_play_date
+      }))
+
+      // Guardar en localStorage
+      this.saveRepetitionData(localFormat)
+
+      console.log(`✅ Cargados ${localFormat.length} límites desde Supabase`)
+    } catch (error) {
+      console.error('❌ Error cargando límites desde Supabase:', error)
+    }
+  }
+
+  // Sincronizar automáticamente al cambiar límites
+  private async syncLimitChange(contentId: string): Promise<void> {
+    console.log(`🔄 Intentando sincronizar límite para ${contentId}...`)
+    
+    if (!this.isSupabaseEnabled) {
+      console.log(`ℹ️ Supabase no disponible, saltando sincronización para ${contentId}`)
+      return
+    }
+
+    try {
+      const data = this.getRepetitionData(contentId)
+      if (!data) {
+        console.log(`⚠️ No hay datos para sincronizar para ${contentId}`)
+        return
+      }
+
+      console.log(`📤 Enviando datos a Supabase para ${contentId}:`, {
+        content_id: contentId,
+        daily_limit: data.dailyLimit,
+        is_unlimited: data.isUnlimited,
+        daily_count: data.dailyCount,
+        last_play_date: data.lastPlayDate
+      })
+
+      const { error } = await supabase
+        .from('repetition_limits')
+        .upsert({
+          content_id: contentId,
+          daily_limit: data.dailyLimit,
+          is_unlimited: data.isUnlimited,
+          daily_count: data.dailyCount,
+          last_play_date: data.lastPlayDate
+        }, {
+          onConflict: 'content_id'
+        })
+
+      if (error) {
+        console.error(`❌ Error sincronizando cambio de límite para ${contentId}:`, error)
+      } else {
+        console.log(`✅ Límite sincronizado exitosamente para ${contentId}`)
+      }
+    } catch (error) {
+      console.error('❌ Error en sincronización automática:', error)
+    }
+  }
+
+  // Inicializar sincronización
+  async initializeSync(): Promise<void> {
+    try {
+      console.log('🚀 Inicializando sincronización de límites de repeticiones...')
+      await this.checkSupabaseConnection()
+      
+      if (this.isSupabaseEnabled) {
+        console.log('🔄 Iniciando sincronización con Supabase...')
+        
+        // Cargar datos existentes de Supabase
+        await this.loadFromSupabase()
+        
+        // Sincronizar datos locales con Supabase
+        await this.syncToSupabase()
+        
+        // Iniciar sincronización automática cada 30 segundos
+        this.startAutoSync()
+        
+        console.log('✅ Sincronización inicial completada')
+      } else {
+        console.log('⚠️ Supabase no disponible, usando solo almacenamiento local')
+      }
+    } catch (error) {
+      console.error('❌ Error en sincronización inicial:', error)
+    }
+  }
+
+  // Iniciar sincronización automática
+  private startAutoSync(): void {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval)
+    }
+    
+    this.syncInterval = setInterval(async () => {
+      try {
+        await this.performAutoSync()
+      } catch (error) {
+        console.error('❌ Error en sincronización automática:', error)
+      }
+    }, 30000) // Sincronizar cada 30 segundos
+    
+    console.log('🔄 Sincronización automática iniciada (cada 30 segundos)')
+  }
+
+  // Detener sincronización automática
+  stopAutoSync(): void {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval)
+      this.syncInterval = null
+      console.log('⏹️ Sincronización automática detenida')
+    }
+  }
+
+  // Realizar sincronización automática
+  private async performAutoSync(): Promise<void> {
+    if (!this.isSupabaseEnabled) return
+    
+    try {
+      // Cargar cambios desde Supabase
+      await this.loadFromSupabase()
+      
+      // Notificar a los listeners que hay cambios
+      this.notifySyncCallbacks()
+      
+      console.log('🔄 Sincronización automática completada')
+    } catch (error) {
+      console.error('❌ Error en sincronización automática:', error)
+    }
+  }
+
+  // Agregar callback para notificar cambios
+  onSyncChange(callback: () => void): void {
+    this.syncCallbacks.push(callback)
+  }
+
+  // Remover callback
+  removeSyncCallback(callback: () => void): void {
+    const index = this.syncCallbacks.indexOf(callback)
+    if (index > -1) {
+      this.syncCallbacks.splice(index, 1)
+    }
+  }
+
+  // Notificar a todos los callbacks
+  private notifySyncCallbacks(): void {
+    this.syncCallbacks.forEach(callback => {
+      try {
+        callback()
+      } catch (error) {
+        console.error('❌ Error en callback de sincronización:', error)
+      }
+    })
   }
 } 

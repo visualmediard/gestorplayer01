@@ -3,6 +3,7 @@ import { Toaster } from 'sonner';
 import { Program } from './types/content';
 import { ProgramService } from './services/programService';
 import { GlobalPlaybackService } from './services/globalPlaybackService';
+import { RepetitionService } from './services/repetitionService';
 import Index from './pages/Index';
 import DesktopProgramSelector from './components/DesktopProgramSelector';
 
@@ -18,6 +19,12 @@ function usePrograms() {
   // Cargar programas al iniciar
   useEffect(() => {
     loadPrograms();
+    
+    // Inicializar sincronización de límites de repeticiones
+    const repetitionService = RepetitionService.getInstance();
+    repetitionService.initializeSync().catch(error => {
+      console.error('❌ Error inicializando sincronización de repeticiones:', error);
+    });
   }, []);
 
   // Inicializar servicio global cuando cambien los programas

@@ -32,9 +32,9 @@ export function RepetitionConfigDialog({
     }
   }, [isOpen, content, repetitionService]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const finalLimit = isUnlimited ? -1 : dailyLimit;
-    repetitionService.setDailyLimit(content.id, finalLimit, isUnlimited);
+    await repetitionService.setDailyLimit(content.id, finalLimit, isUnlimited);
     onSave(content.id, finalLimit, isUnlimited);
     onClose();
   };

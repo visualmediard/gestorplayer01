@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Program } from '../types/content';
 import { ProgramService } from '../services/programService';
 import { GlobalPlaybackService } from '../services/globalPlaybackService';
+import { RepetitionService } from '../services/repetitionService';
 import { supabase } from '../config/supabase';
 import CanvasEditor from './CanvasEditor';
 
@@ -140,11 +141,19 @@ const DesktopProgramSelector: React.FC = () => {
     setupRealtimeSync();
     startAutoSync();
     
+    // Inicializar sincronización de límites de repeticiones
+    const repetitionService = RepetitionService.getInstance();
+    repetitionService.initializeSync().catch(error => {
+      console.error('❌ Error inicializando sincronización de repeticiones:', error);
+    });
+    
     return () => {
       stopAutoSync();
       if (subscriptionRef.current) {
         supabase.removeChannel(subscriptionRef.current);
       }
+      // Detener sincronización de repeticiones
+      repetitionService.stopAutoSync();
     };
   }, []);
 
