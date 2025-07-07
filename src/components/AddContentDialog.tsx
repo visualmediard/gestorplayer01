@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { MediaContent, Content } from '../types/content';
+import { Content } from '../types/content';
 import { useToast } from '../hooks/use-toast';
 import { generateId } from '../lib/utils';
 import { StorageService } from '../services/storageService';

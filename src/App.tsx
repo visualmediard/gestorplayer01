@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { Program } from './types/content';
 import { ProgramService } from './services/programService';
-import { setupSupabase, showManualSetupInstructions, CREATE_TABLE_SQL, RESET_SUPABASE_SQL } from './scripts/setupSupabase';
 import { GlobalPlaybackService } from './services/globalPlaybackService';
 import Index from './pages/Index';
+import DesktopProgramSelector from './components/DesktopProgramSelector';
 
 // Hook simplificado para programas
 function usePrograms() {
@@ -108,7 +108,18 @@ function usePrograms() {
   };
 }
 
+function isElectron() {
+  // Detección robusta de Electron
+  return typeof window !== 'undefined' &&
+    typeof window.process === 'object' &&
+    window.process.type === 'renderer' ||
+    navigator.userAgent.toLowerCase().indexOf(' electron/') > -1;
+}
+
 function App() {
+  if (isElectron()) {
+    return <DesktopProgramSelector />;
+  }
   const { 
     programs, 
     isLoaded, 

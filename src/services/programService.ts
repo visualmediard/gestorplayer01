@@ -24,7 +24,7 @@ export class ProgramService {
 
   private async checkSupabaseConnection() {
     try {
-      const { data, error } = await supabase
+      const { error } = await supabase
         .from('programs')
         .select('*')
         .limit(1)

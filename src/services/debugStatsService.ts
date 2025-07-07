@@ -37,9 +37,9 @@ export class DebugStatsService {
     // Estado de reproducción actual
     console.log('\n🎯 Estado de Reproducción Actual:');
     const playbackStats = this.globalPlayback.getCurrentPlaybackStats();
-    Object.entries(playbackStats).forEach(([programId, programData]) => {
+    Object.entries(playbackStats).forEach(([, programData]) => {
       console.log(`📋 Programa: ${programData.programName}`);
-      Object.entries(programData.zones).forEach(([zoneId, zoneData]) => {
+      Object.entries(programData.zones).forEach(([, zoneData]) => {
         console.log(`  📍 Zona: ${zoneData.zoneName}`);
         console.log(`    - Contenido actual: ${zoneData.currentContent}`);
         console.log(`    - Total contenido: ${zoneData.totalContent}`);

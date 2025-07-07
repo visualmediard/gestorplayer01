@@ -1,5 +1,3 @@
-import { MediaContent } from '../types/content';
-
 interface RepetitionData {
   contentId: string;
   dailyCount: number;

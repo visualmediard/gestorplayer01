@@ -1,4 +1,4 @@
-import { Program, Content, Zone } from '../types/content';
+import { Program, Zone } from '../types/content';
 import { RepetitionService } from './repetitionService';
 import ReproductionStatsService from './reproductionStatsService';
 
@@ -75,7 +75,7 @@ export class GlobalPlaybackService {
     console.log('⏹️ Deteniendo reproducción global automática');
 
     // Limpiar todos los intervalos
-    this.playbackIntervals.forEach((interval, key) => {
+    this.playbackIntervals.forEach((interval) => {
       clearInterval(interval);
     });
     this.playbackIntervals.clear();
@@ -213,7 +213,6 @@ export class GlobalPlaybackService {
     playbackSpeed: number;
     totalContent: number;
   } {
-    const totalZones = this.programs.reduce((sum, program) => sum + (program.zones?.length || 0), 0);
     const totalContent = this.programs.reduce((sum, program) => {
       return sum + (program.zones?.reduce((zoneSum, zone) => zoneSum + (zone.content?.length || 0), 0) || 0);
     }, 0);
