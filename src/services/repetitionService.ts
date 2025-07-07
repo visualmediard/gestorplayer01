@@ -118,6 +118,7 @@ export class RepetitionService {
         dailyCount: 1,
         lastPlayDate: today
       });
+      console.log(`🆕 Nuevo contenido reproducido - ID: ${contentId}, Contador: 1`);
     } else {
       // Si es un día diferente, resetear contador
       if (data.lastPlayDate !== today) {
@@ -125,12 +126,15 @@ export class RepetitionService {
           dailyCount: 1,
           lastPlayDate: today
         });
+        console.log(`🗓️ Nuevo día detectado - ID: ${contentId}, Contador reseteado a: 1`);
       } else {
         // Incrementar contador del día
+        const newCount = data.dailyCount + 1;
         this.updateRepetitionData(contentId, {
-          dailyCount: data.dailyCount + 1,
+          dailyCount: newCount,
           lastPlayDate: today
         });
+        console.log(`🔢 Reproducción registrada - ID: ${contentId}, Contador: ${newCount}, Límite: ${data.isUnlimited ? 'Ilimitado' : data.dailyLimit}`);
       }
     }
   }
@@ -153,6 +157,33 @@ export class RepetitionService {
       canPlay: this.canPlayToday(contentId),
       isUnlimited: data.isUnlimited
     };
+  }
+
+  // Obtener estadísticas específicas de un contenido (para sincronización)
+  getContentStats(contentId: string): { reproductionsToday: number; dailyLimit: number; isUnlimited: boolean } | null {
+    const data = this.getRepetitionData(contentId);
+    const today = this.getCurrentDate();
+    
+    if (!data) {
+      return null;
+    }
+
+    // Si es un día diferente, el contador se resetea
+    const reproductionsToday = data.lastPlayDate === today ? data.dailyCount : 0;
+    
+    return {
+      reproductionsToday,
+      dailyLimit: data.dailyLimit,
+      isUnlimited: data.isUnlimited
+    };
+  }
+
+  // Limpiar datos de repetición para un contenido específico
+  clearContentData(contentId: string): void {
+    const allData = this.loadRepetitionData();
+    const filteredData = allData.filter(data => data.contentId !== contentId);
+    this.saveRepetitionData(filteredData);
+    console.log(`🧹 Datos de repetición eliminados para contenido ID: ${contentId}`);
   }
 
   // Limpiar datos de repeticiones (para testing o mantenimiento)
@@ -183,5 +214,66 @@ export class RepetitionService {
       activeToday,
       completedToday
     };
+  }
+
+  // Obtener todas las estadísticas como array para debugging
+  getAllStats(): Array<{
+    contentId: string;
+    reproductionsToday: number;
+    dailyLimit: number;
+    lastPlayDate: string;
+    canPlayToday: boolean;
+    isUnlimited: boolean;
+  }> {
+    const allData = this.loadRepetitionData();
+    const today = this.getCurrentDate();
+    
+    return allData.map(data => ({
+      contentId: data.contentId,
+      reproductionsToday: data.lastPlayDate === today ? data.dailyCount : 0,
+      dailyLimit: data.dailyLimit,
+      lastPlayDate: data.lastPlayDate,
+      canPlayToday: this.canPlayToday(data.contentId),
+      isUnlimited: data.isUnlimited
+    }));
+  }
+
+  // Mostrar estadísticas detalladas en consola (para debugging)
+  showDetailedStats(): void {
+    const allData = this.loadRepetitionData();
+    const today = this.getCurrentDate();
+    
+    console.log('📊 === ESTADÍSTICAS DETALLADAS DE REPETICIONES ===');
+    console.log(`📅 Fecha: ${today}`);
+    console.log(`📝 Total de contenidos con datos: ${allData.length}`);
+    console.log('');
+    
+    if (allData.length === 0) {
+      console.log('❌ No hay datos de repetición registrados');
+      return;
+    }
+    
+    console.log('📋 Detalle por contenido:');
+    allData.forEach((data, index) => {
+      const isToday = data.lastPlayDate === today;
+      const canPlay = this.canPlayToday(data.contentId);
+      const status = data.isUnlimited ? 'Ilimitado' : 
+                     canPlay ? 'Activo' : 'Límite alcanzado';
+      
+      console.log(`${index + 1}. ID: ${data.contentId}`);
+      console.log(`   📊 Reproducciones hoy: ${isToday ? data.dailyCount : 0}`);
+      console.log(`   🎯 Límite diario: ${data.isUnlimited ? 'Ilimitado' : data.dailyLimit}`);
+      console.log(`   📅 Última reproducción: ${data.lastPlayDate}`);
+      console.log(`   ✅ Estado: ${status}`);
+      console.log(`   🔄 Puede reproducirse: ${canPlay ? 'Sí' : 'No'}`);
+      console.log('');
+    });
+    
+    const stats = this.getStats();
+    console.log('📈 Resumen:');
+    console.log(`   📁 Total contenidos: ${stats.totalContents}`);
+    console.log(`   🟢 Activos hoy: ${stats.activeToday}`);
+    console.log(`   🔴 Completados hoy: ${stats.completedToday}`);
+    console.log('='.repeat(50));
   }
 } 

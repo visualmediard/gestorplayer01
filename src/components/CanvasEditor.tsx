@@ -4,6 +4,8 @@ import { Plus, Grid, Settings, Upload, Play, Pause, X, ChevronUp, ChevronDown, I
 import { generateId } from '../lib/utils';
 import { RepetitionService } from '../services/repetitionService';
 import { RepetitionConfigDialog } from './RepetitionConfigDialog';
+import { StorageService } from '../services/storageService';
+import ReproductionStatsService from '../services/reproductionStatsService';
 
 interface CanvasEditorProps {
   program: Program;
@@ -45,6 +47,8 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
   const [repetitionDialogOpen, setRepetitionDialogOpen] = useState(false);
   const [selectedContentForRepetition, setSelectedContentForRepetition] = useState<MediaContent | null>(null);
   const repetitionService = RepetitionService.getInstance();
+  const storageService = StorageService.getInstance();
+  const reproductionStatsService = ReproductionStatsService.getInstance();
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
@@ -66,17 +70,39 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
             // Manejar transición suave
             handleContentTransition(zone.id);
             
+            // Cambiar al siguiente contenido
             setCurrentContentIndex(prev => ({
               ...prev,
               [zone.id]: nextIndex
             }));
+            
+            // Registrar la reproducción del nuevo contenido
+            const nextContent = availableContent[nextIndex];
+            if (nextContent && isPlaying[zone.id]) {
+              // Registrar en sistema de repeticiones
+              repetitionService.recordPlayback(nextContent.id);
+              
+              // Registrar en estadísticas de reproducción (solo para imagen y video)
+              if (nextContent.type === 'image' || nextContent.type === 'video') {
+                reproductionStatsService.recordReproduction(
+                  nextContent.id,
+                  nextContent.name,
+                  nextContent.type,
+                  program.id,
+                  program.name,
+                  nextContent.type === 'video' ? 15 : 8
+                );
+              }
+              
+              console.log(`🔄 Loop - Reproducción registrada: ${nextContent.name} (ID: ${nextContent.id})`);
+            }
           }
         }
       });
     }, 8000); // Cambia cada 8 segundos para dar más tiempo de visualización
 
     return () => clearInterval(interval);
-  }, [zones, currentContentIndex, repetitionService]);
+  }, [zones, currentContentIndex, isPlaying, repetitionService, reproductionStatsService, program.id, program.name]);
 
   // Auto-reproducir videos cuando se carga contenido
   useEffect(() => {
@@ -88,15 +114,40 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
         }));
         
         // Reiniciar el índice si es necesario
-        if (!currentContentIndex[zone.id] && zone.content.length > 0) {
+        if (currentContentIndex[zone.id] === undefined && zone.content.length > 0) {
           setCurrentContentIndex(prev => ({
             ...prev,
             [zone.id]: 0
           }));
+          
+          // Registrar la reproducción inicial del primer contenido
+          const availableContent = zone.content.filter(content => 
+            repetitionService.canPlayToday(content.id)
+          );
+          if (availableContent.length > 0) {
+            const firstContent = availableContent[0];
+            
+            // Registrar en sistema de repeticiones
+            repetitionService.recordPlayback(firstContent.id);
+            
+            // Registrar en estadísticas de reproducción (solo para imagen y video)
+            if (firstContent.type === 'image' || firstContent.type === 'video') {
+              reproductionStatsService.recordReproduction(
+                firstContent.id,
+                firstContent.name,
+                firstContent.type,
+                program.id,
+                program.name,
+                firstContent.type === 'video' ? 15 : 8
+              );
+            }
+            
+            console.log(`🎬 Reproducción inicial registrada: ${firstContent.name} (ID: ${firstContent.id})`);
+          }
         }
       }
     });
-  }, [zones]);
+  }, [zones, currentContentIndex, repetitionService, reproductionStatsService, program.id, program.name]);
 
   // Efecto para manejar el autoplay cuando cambia el contenido actual
   useEffect(() => {
@@ -132,11 +183,6 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
     
     const index = currentContentIndex[zone.id] || 0;
     const content = availableContent[index] || availableContent[0];
-    
-    // Registrar la reproducción solo una vez por cambio de contenido
-    if (content && isPlaying[zone.id]) {
-      repetitionService.recordPlayback(content.id);
-    }
     
     return content;
   };
@@ -270,28 +316,33 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
     return { isValid: true };
   };
 
-  // Función para crear contenido desde archivo
-  const createContentFromFile = (file: File): Content => {
+  // Función para crear contenido desde archivo subido a Supabase Storage
+  const createContentFromFile = (file: File, storageUrl: string, filePath: string): Content => {
     const isVideo = file.type.startsWith('video/');
-    const url = URL.createObjectURL(file);
+    const contentId = generateId();
+    
+    // Asegurar que el contenido nuevo comience desde cero (limpiar cualquier dato previo)
+    repetitionService.clearContentData(contentId);
     
     return {
-      id: generateId(),
+      id: contentId,
       name: file.name,
       type: isVideo ? 'video' : 'image',
-      url,
+      url: storageUrl,
       duration: isVideo ? 30 : 10, // 30 segundos para video, 10 para imagen
       frequency: 1,
       originalFrequency: 1,
       remainingPlays: 1,
       isActive: true,
       createdAt: new Date().toISOString(),
-      totalPlays: 0
+      totalPlays: 0,
+      filePath: filePath,
+      isStorageFile: true
     };
   };
 
   // Manejar subida de archivos
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || !selectedZone) return;
 
@@ -301,14 +352,29 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
     const newContent: Content[] = [];
     const errors: string[] = [];
 
-    Array.from(files).forEach((file) => {
+    // Procesar archivos uno por uno
+    for (const file of Array.from(files)) {
       const validation = validateFile(file);
-      if (validation.isValid) {
-        newContent.push(createContentFromFile(file));
-      } else {
+      if (!validation.isValid) {
         errors.push(`${file.name}: ${validation.error}`);
+        continue;
       }
-    });
+
+      try {
+        // Subir archivo a Supabase Storage
+        const uploadResult = await storageService.uploadFile(file);
+        
+        if (uploadResult.success && uploadResult.url && uploadResult.path) {
+          // Crear contenido con URL de Supabase Storage
+          const content = createContentFromFile(file, uploadResult.url, uploadResult.path);
+          newContent.push(content);
+        } else {
+          errors.push(`${file.name}: ${uploadResult.error || 'Error al subir archivo'}`);
+        }
+      } catch (error) {
+        errors.push(`${file.name}: Error inesperado al subir`);
+      }
+    }
 
     if (errors.length > 0) {
       setUploadError(errors.join('\n'));
@@ -341,8 +407,24 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
   };
 
   // Eliminar contenido
-  const removeContent = (contentId: string) => {
+  const removeContent = async (contentId: string) => {
     if (!selectedZone) return;
+
+    // Encontrar el contenido a eliminar
+    const contentToRemove = selectedZone.content.find(c => c.id === contentId);
+    
+    // Si el archivo está en Supabase Storage, eliminarlo
+    if (contentToRemove?.isStorageFile && contentToRemove.filePath) {
+      try {
+        await storageService.deleteFile(contentToRemove.filePath);
+      } catch (error) {
+        console.warn('Error al eliminar archivo del storage:', error);
+        // Continuar con la eliminación del contenido aunque falle la eliminación del archivo
+      }
+    }
+
+    // Limpiar datos de repetición para este contenido
+    repetitionService.clearContentData(contentId);
 
     const updatedZones = zones.map(zone => 
       zone.id === selectedZone.id 
@@ -734,7 +816,7 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
               <div className="flex items-center justify-center min-h-full">
                 <div
                   ref={canvasRef}
-                  className="relative bg-white shadow-xl rounded-lg border border-gray-200 cursor-crosshair"
+                  className="relative bg-white shadow-xl rounded-lg border border-gray-200"
                   style={{
                     width: canvasSize.width,
                     height: canvasSize.height,
@@ -752,16 +834,14 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
                   {zones.map((zone) => (
                     <div
                       key={zone.id}
-                      className={`absolute cursor-move zone-transition overflow-hidden ${
-                        zone.isSelected ? 'ring-2 ring-corporate-dark-blue zone-selected' : 'hover:ring-1 hover:ring-corporate-light-blue'
-                      }`}
+                      className="absolute overflow-hidden"
                       style={{
                         left: (zone.x * canvasSize.width) / program.width,
                         top: (zone.y * canvasSize.height) / program.height,
                         width: (zone.width * canvasSize.width) / program.width,
                         height: (zone.height * canvasSize.height) / program.height,
-                        backgroundColor: zone.content.length > 0 ? 'transparent' : (zone.isSelected ? 'rgba(37, 99, 235, 0.1)' : 'rgba(255, 255, 255, 0.8)'),
-                        border: `2px solid ${zone.isSelected ? 'hsl(195, 73%, 20%)' : 'hsl(195, 73%, 85%)'}`,
+                        backgroundColor: zone.content.length > 0 ? 'transparent' : 'rgba(255, 255, 255, 0.8)',
+                        border: zone.content.length > 0 ? 'none' : '2px solid hsl(195, 73%, 85%)',
                         borderRadius: '8px',
                         zIndex: zone.zIndex
                       }}
@@ -929,7 +1009,7 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
                 <span>{isUploadingContent ? 'Subiendo...' : 'Subir Contenido'}</span>
               </button>
               <p className="text-xs text-corporate-charcoal-gray mt-2 text-center">
-                Máximo 15MB • Imágenes y videos
+                Máximo 15MB • Imágenes y videos • Almacenamiento permanente
               </p>
             </div>
 
@@ -986,6 +1066,9 @@ const CanvasEditor: React.FC<CanvasEditorProps> = ({ program, onUpdateProgram, o
                             <div className="flex items-center space-x-2">
                               <p className="text-xs text-corporate-charcoal-gray/70">
                                 {content.type === 'video' ? 'Video' : 'Imagen'} • {content.duration}s
+                                {content.isStorageFile && (
+                                  <span className="text-green-600 font-medium"> • ☁️ Storage</span>
+                                )}
                               </p>
                               {/* Indicador de repeticiones */}
                               <div className={`text-xs px-2 py-1 rounded-full flex items-center space-x-1 ${

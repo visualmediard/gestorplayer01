@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useRef } from 'react';
-import { MediaContent } from '../types/content';
+import { MediaContent, Content } from '../types/content';
 import { useToast } from '../hooks/use-toast';
 import { generateId } from '../lib/utils';
+import { StorageService } from '../services/storageService';
 import {
   X,
   Upload,
@@ -13,13 +14,14 @@ import {
   Check,
   AlertCircle,
   Trash2,
-  Plus
+  Plus,
+  Cloud
 } from 'lucide-react';
 
 interface AddContentDialogProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddContent: (content: MediaContent) => void;
+  onAddContent: (content: Content) => void;
 }
 
 interface FileWithPreview {
@@ -29,16 +31,18 @@ interface FileWithPreview {
   type: 'image' | 'video' | 'audio' | 'text';
   isValid: boolean;
   error?: string;
+  isUploading?: boolean;
+  uploadProgress?: number;
 }
 
 const SUPPORTED_TYPES = {
-  image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'],
-  video: ['video/mp4', 'video/webm', 'video/ogg', 'video/avi', 'video/mov'],
+  image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+  video: ['video/mp4', 'video/webm', 'video/mov'],
   audio: ['audio/mp3', 'audio/wav', 'audio/ogg', 'audio/aac'],
   text: ['text/plain', 'text/html', 'text/css', 'text/javascript']
 };
 
-const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15MB - coincide con el límite de Supabase
 
 function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogProps) {
   const [files, setFiles] = useState<FileWithPreview[]>([]);
@@ -46,12 +50,13 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { showSuccessToast, showErrorToast } = useToast();
+  const storageService = StorageService.getInstance();
 
   // Validar tipo de archivo
   const validateFile = useCallback((file: File): { isValid: boolean; error?: string; type?: 'image' | 'video' | 'audio' | 'text' } => {
     // Verificar tamaño
     if (file.size > MAX_FILE_SIZE) {
-      return { isValid: false, error: 'El archivo es demasiado grande (máximo 50MB)' };
+      return { isValid: false, error: 'El archivo es demasiado grande (máximo 15MB)' };
     }
 
     // Verificar tipo
@@ -103,7 +108,9 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
         id: generateId(),
         type: validation.type || 'text',
         isValid: validation.isValid,
-        error: validation.error
+        error: validation.error,
+        isUploading: false,
+        uploadProgress: 0
       });
     }
 
@@ -183,54 +190,98 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
     setIsUploading(true);
 
     try {
+      const successfulUploads: Content[] = [];
+      
       for (const fileData of validFiles) {
-        // Crear URL temporal para el archivo
-        const url = URL.createObjectURL(fileData.file);
+        // Marcar archivo como subiendo
+        setFiles(prev => prev.map(f => 
+          f.id === fileData.id 
+            ? { ...f, isUploading: true, uploadProgress: 0 }
+            : f
+        ));
+
+        // Subir archivo a Supabase Storage
+        const uploadResult = await storageService.uploadFile(fileData.file);
         
-        // Obtener duración para videos (simulado)
-        let duration = 10; // Duración por defecto
-        if (fileData.type === 'video') {
-          duration = 30; // Videos más largos
-        } else if (fileData.type === 'image') {
-          duration = 8; // Imágenes más cortas
+        if (uploadResult.success && uploadResult.url && uploadResult.path) {
+          // Obtener duración estimada
+          let duration = 10; // Duración por defecto
+          if (fileData.type === 'video') {
+            duration = 30; // Videos más largos
+          } else if (fileData.type === 'image') {
+            duration = 8; // Imágenes más cortas
+          }
+
+          const newContent: Content = {
+            id: generateId(),
+            name: fileData.file.name,
+            type: fileData.type === 'image' ? 'image' : 'video',
+            url: uploadResult.url,
+            duration: duration,
+            frequency: 1,
+            originalFrequency: 1,
+            remainingPlays: 1,
+            isActive: true,
+            createdAt: new Date().toISOString(),
+            totalPlays: 0,
+            // Campos de Supabase Storage
+            filePath: uploadResult.path,
+            isStorageFile: true
+          };
+
+          successfulUploads.push(newContent);
+          
+          // Marcar como completado
+          setFiles(prev => prev.map(f => 
+            f.id === fileData.id 
+              ? { ...f, isUploading: false, uploadProgress: 100 }
+              : f
+          ));
+        } else {
+          showErrorToast(`Error subiendo ${fileData.file.name}: ${uploadResult.error}`);
+          
+          // Marcar como fallido
+          setFiles(prev => prev.map(f => 
+            f.id === fileData.id 
+              ? { ...f, isUploading: false, error: uploadResult.error }
+              : f
+          ));
         }
-
-        const newContent: MediaContent = {
-          id: generateId(),
-          name: fileData.file.name,
-          type: fileData.type === 'image' ? 'image' : 'video',
-          file: fileData.file,
-          url: url,
-          duration: duration,
-          dailyFrequency: 20,
-          isUnlimited: false,
-          size: fileData.file.size,
-          lastModified: fileData.file.lastModified
-        };
-
-        onAddContent(newContent);
       }
 
-      showSuccessToast(`${validFiles.length} archivo(s) añadido(s)`);
-      setFiles([]);
-      onClose();
+      // Añadir contenidos exitosos
+      for (const content of successfulUploads) {
+        onAddContent(content);
+      }
+
+      if (successfulUploads.length > 0) {
+        showSuccessToast(`${successfulUploads.length} archivo(s) subido(s) a Supabase Storage`);
+        setFiles([]);
+        onClose();
+      }
     } catch (error) {
-      showErrorToast('Error al añadir contenido');
+      showErrorToast('Error al subir archivos');
     } finally {
       setIsUploading(false);
     }
-  }, [files, onAddContent, showSuccessToast, showErrorToast, onClose]);
+  }, [files, onAddContent, showSuccessToast, showErrorToast, onClose, storageService]);
 
   // Añadir contenido de ejemplo
   const addSampleContent = useCallback(() => {
-    const sampleContent: MediaContent = {
-      id: generateId(),
+    const contentId = generateId();
+    
+    const sampleContent: Content = {
+      id: contentId,
       name: `Contenido de ejemplo ${Date.now()}`,
       type: Math.random() > 0.5 ? 'image' : 'video',
-      file: null,
       duration: Math.floor(Math.random() * 20) + 5,
-      dailyFrequency: Math.floor(Math.random() * 30) + 10,
-      isUnlimited: false
+      frequency: Math.floor(Math.random() * 5) + 1,
+      originalFrequency: Math.floor(Math.random() * 5) + 1,
+      remainingPlays: Math.floor(Math.random() * 5) + 1,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      totalPlays: 0,
+      isStorageFile: false
     };
 
     onAddContent(sampleContent);
@@ -256,6 +307,9 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
               <h2 className="text-xl font-semibold text-corporate-dark-blue">
                 Añadir Contenido
               </h2>
+              <p className="text-sm text-gray-600 mt-1">
+                Los archivos se subirán a Supabase Storage permanentemente
+              </p>
             </div>
             <button
               onClick={handleClose}
@@ -289,16 +343,17 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
             
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="bg-corporate-dark-blue text-white px-6 py-2 rounded-lg hover:bg-corporate-deep-blue transition-colors"
+              className="bg-corporate-dark-blue text-white px-6 py-2 rounded-lg hover:bg-corporate-deep-blue transition-colors flex items-center space-x-2 mx-auto"
             >
-              Seleccionar Archivos
+              <Upload className="w-4 h-4" />
+              <span>Seleccionar Archivos</span>
             </button>
             
             <input
               ref={fileInputRef}
               type="file"
               multiple
-              accept="image/*,video/*,audio/*,.txt,.html,.css,.js"
+              accept="image/*,video/*"
               onChange={handleFileSelect}
               className="hidden"
             />
@@ -306,7 +361,10 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
 
           {/* Tipos de archivo soportados */}
           <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-            <h4 className="font-medium text-gray-900 mb-3">Tipos de archivo soportados:</h4>
+            <h4 className="font-medium text-gray-900 mb-3">
+              <Cloud className="w-4 h-4 inline mr-2" />
+              Tipos de archivo soportados:
+            </h4>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <div className="flex items-center space-x-2 mb-2">
@@ -323,12 +381,13 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
                   <span className="font-medium">Videos</span>
                 </div>
                 <div className="text-gray-600 text-xs">
-                  MP4, WebM, OGG, AVI
+                  MP4, WebM, MOV
                 </div>
               </div>
             </div>
-            <div className="mt-2 text-xs text-gray-500">
-              Tamaño máximo: 50MB por archivo
+            <div className="mt-2 text-xs text-gray-500 flex items-center space-x-2">
+              <Cloud className="w-3 h-3" />
+              <span>Tamaño máximo: 15MB por archivo • Almacenamiento permanente en Supabase</span>
             </div>
           </div>
 
@@ -369,6 +428,12 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
                       <div className="text-xs text-gray-500">
                         {formatFileSize(fileData.file.size)} • {fileData.type.toUpperCase()}
                       </div>
+                      {fileData.isUploading && (
+                        <div className="text-xs text-blue-600 mt-1 flex items-center space-x-1">
+                          <Upload className="w-3 h-3" />
+                          <span>Subiendo a Supabase Storage...</span>
+                        </div>
+                      )}
                       {fileData.error && (
                         <div className="text-xs text-red-600 mt-1">
                           {fileData.error}
@@ -378,14 +443,17 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
 
                     {/* Estado y acciones */}
                     <div className="flex items-center space-x-2">
-                      {fileData.isValid ? (
+                      {fileData.isUploading ? (
+                        <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+                      ) : fileData.isValid ? (
                         <Check className="w-5 h-5 text-green-600" />
                       ) : (
                         <AlertCircle className="w-5 h-5 text-red-600" />
                       )}
                       <button
                         onClick={() => removeFile(fileData.id)}
-                        className="p-1 hover:bg-red-100 rounded transition-colors"
+                        disabled={fileData.isUploading}
+                        className="p-1 hover:bg-red-100 rounded transition-colors disabled:opacity-50"
                       >
                         <Trash2 className="w-4 h-4 text-red-600" />
                       </button>
@@ -417,8 +485,9 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
         {/* Footer */}
         <div className="p-6 border-t border-gray-200">
           <div className="flex items-center justify-between">
-            <div className="text-sm text-gray-500">
-              {files.filter(f => f.isValid).length} de {files.length} archivos válidos
+            <div className="text-sm text-gray-500 flex items-center space-x-2">
+              <Cloud className="w-4 h-4" />
+              <span>{files.filter(f => f.isValid).length} de {files.length} archivos válidos</span>
             </div>
             <div className="flex space-x-3">
               <button
@@ -430,9 +499,19 @@ function AddContentDialog({ isOpen, onClose, onAddContent }: AddContentDialogPro
               <button
                 onClick={handleAddContent}
                 disabled={files.filter(f => f.isValid).length === 0 || isUploading}
-                className="px-6 py-2 bg-corporate-dark-blue text-white rounded-lg hover:bg-corporate-deep-blue disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-6 py-2 bg-corporate-dark-blue text-white rounded-lg hover:bg-corporate-deep-blue disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center space-x-2"
               >
-                {isUploading ? 'Añadiendo...' : 'Añadir Contenido'}
+                {isUploading ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Subiendo...</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="w-4 h-4" />
+                    <span>Subir a Storage</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

@@ -88,6 +88,45 @@ class ReproductionStatsService {
     this.saveStats(); // Guardar inmediatamente después de registrar
   }
 
+  // Sincronizar conteo exacto con RepetitionService
+  syncReproductionCount(
+    contentId: string,
+    contentName: string,
+    contentType: 'image' | 'video',
+    programId: string,
+    programName: string,
+    exactCount: number,
+    duration?: number
+  ): void {
+    const now = Date.now();
+
+    if (!this.stats[contentId]) {
+      this.stats[contentId] = {
+        name: contentName,
+        type: contentType,
+        reproductions: 0,
+        lastReproduction: 0,
+        programId,
+        programName,
+        reproductionsPerMinute: 0,
+        totalDuration: 0,
+        averageSessionTime: 0
+      };
+    }
+
+    // Actualizar con el conteo exacto
+    this.stats[contentId].reproductions = exactCount;
+    this.stats[contentId].lastReproduction = now;
+    
+    if (duration) {
+      this.stats[contentId].totalDuration = (this.stats[contentId].totalDuration || 0) + duration;
+      this.stats[contentId].averageSessionTime = this.stats[contentId].totalDuration! / this.stats[contentId].reproductions;
+    }
+
+    this.calculateReproductionsPerMinute(contentId);
+    this.saveStats(); // Guardar inmediatamente después de sincronizar
+  }
+
   private calculateReproductionsPerMinute(contentId: string): void {
     const stat = this.stats[contentId];
     if (!stat) return;
@@ -100,6 +139,35 @@ class ReproductionStatsService {
 
   getStats(): ReproductionStats {
     return { ...this.stats };
+  }
+
+  // Obtener todas las estadísticas como array para debugging
+  getAllStats(): Array<{
+    contentId: string;
+    contentName: string;
+    contentType: 'image' | 'video';
+    reproductions: number;
+    lastReproduction: string;
+    programId: string;
+    programName: string;
+    totalTime: number;
+  }> {
+    return Object.entries(this.stats).map(([contentId, stat]) => ({
+      contentId,
+      contentName: stat.name,
+      contentType: stat.type,
+      reproductions: stat.reproductions,
+      lastReproduction: stat.lastReproduction ? new Date(stat.lastReproduction).toLocaleString() : 'Nunca',
+      programId: stat.programId,
+      programName: stat.programName,
+      totalTime: stat.totalDuration || 0
+    }));
+  }
+
+  // Limpiar todas las estadísticas
+  clearAllStats(): void {
+    this.stats = {};
+    this.saveStats();
   }
 
   getGlobalStats(): GlobalStats {
@@ -197,6 +265,14 @@ class ReproductionStatsService {
     if (this.autoSaveInterval) {
       clearInterval(this.autoSaveInterval);
       this.autoSaveInterval = null;
+    }
+  }
+
+  // Borrar estadísticas de un contenido específico
+  clearContentStats(contentId: string): void {
+    if (this.stats[contentId]) {
+      delete this.stats[contentId];
+      this.saveStats();
     }
   }
 }

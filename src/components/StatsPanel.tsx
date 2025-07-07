@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { BarChart3, PieChart, Download, Filter, Calendar } from 'lucide-react';
+import { BarChart3, PieChart, Download, Filter, Calendar, Trash2 } from 'lucide-react';
 import ReproductionStatsService from '../services/reproductionStatsService';
+import { RepetitionService } from '../services/repetitionService';
 import { ReproductionStats } from '../types/content';
 
 function StatsPanel() {
@@ -10,6 +11,7 @@ function StatsPanel() {
   const [isLoading, setIsLoading] = useState(true);
 
   const reproductionStatsService = ReproductionStatsService.getInstance();
+  const repetitionService = RepetitionService.getInstance();
 
   useEffect(() => {
     loadStats();
@@ -73,6 +75,15 @@ function StatsPanel() {
     return Object.values(stats)
       .filter(stat => stat.type === type)
       .reduce((sum, stat) => sum + stat.reproductions, 0);
+  };
+
+  // Eliminar un contenido de estadísticas y repeticiones
+  const handleDeleteContent = (contentId: string) => {
+    if (window.confirm('¿Seguro que deseas borrar todas las estadísticas y repeticiones de este contenido?')) {
+      reproductionStatsService.clearContentStats(contentId);
+      repetitionService.clearContentData(contentId);
+      loadStats();
+    }
   };
 
   if (isLoading) {
@@ -187,6 +198,7 @@ function StatsPanel() {
                 <th className="text-center py-3 px-2 font-medium text-corporate-dark-blue">Reproducciones</th>
                 <th className="text-center py-3 px-2 font-medium text-corporate-dark-blue">Por minuto</th>
                 <th className="text-center py-3 px-2 font-medium text-corporate-dark-blue">Última</th>
+                <th className="text-center py-3 px-2 font-medium text-corporate-dark-blue">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -218,6 +230,15 @@ function StatsPanel() {
                       <Calendar className="w-3 h-3" />
                       <span>{new Date(stat.lastReproduction).toLocaleTimeString('es-ES')}</span>
                     </div>
+                  </td>
+                  <td className="text-center py-3 px-2">
+                    <button
+                      title="Borrar contenido"
+                      onClick={() => handleDeleteContent(contentId)}
+                      className="p-2 rounded hover:bg-red-100 text-red-600 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </td>
                 </tr>
               ))}

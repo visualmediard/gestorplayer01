@@ -31,6 +31,9 @@ export interface Content {
   createdAt: string;
   lastPlayed?: string;
   totalPlays: number;
+  // Para Supabase Storage
+  filePath?: string; // Ruta del archivo en Supabase Storage
+  isStorageFile?: boolean; // Si el archivo está en Supabase Storage
 }
 
 export interface Zone {

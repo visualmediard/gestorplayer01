@@ -152,25 +152,12 @@
 
   /* Canvas Editor Styles */
   .zone-selected {
-    animation: pulse-selection 2s ease-in-out infinite;
-  }
-
-  @keyframes pulse-selection {
-    0%, 100% { 
-      box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4);
-    }
-    50% { 
-      box-shadow: 0 0 0 8px rgba(37, 99, 235, 0);
-    }
+    /* Sin animaciones para aplicación de escritorio */
   }
 
   /* Zone transitions */
   .zone-transition {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .zone-transition:hover {
-    transform: scale(1.02);
   }
 
   /* Canvas zoom animations */

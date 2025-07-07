@@ -3,6 +3,7 @@ import { Toaster } from 'sonner';
 import { Program } from './types/content';
 import { ProgramService } from './services/programService';
 import { setupSupabase, showManualSetupInstructions, CREATE_TABLE_SQL, RESET_SUPABASE_SQL } from './scripts/setupSupabase';
+import { GlobalPlaybackService } from './services/globalPlaybackService';
 import Index from './pages/Index';
 
 // Hook simplificado para programas
@@ -12,11 +13,23 @@ function usePrograms() {
   const [error, setError] = useState<string | null>(null);
   
   const programService = ProgramService.getInstance();
+  const globalPlaybackService = GlobalPlaybackService.getInstance();
 
   // Cargar programas al iniciar
   useEffect(() => {
     loadPrograms();
   }, []);
+
+  // Inicializar servicio global cuando cambien los programas
+  useEffect(() => {
+    if (isLoaded && programs.length > 0) {
+      console.log('🎬 Inicializando servicio global de reproducción automática...');
+      globalPlaybackService.initializeWithPrograms(programs);
+    } else if (isLoaded && programs.length === 0) {
+      console.log('⏹️ No hay programas, deteniendo reproducción global');
+      globalPlaybackService.stopGlobalPlayback();
+    }
+  }, [programs, isLoaded]);
 
   const loadPrograms = async () => {
     try {
@@ -55,7 +68,10 @@ function usePrograms() {
       console.log('🔄 Actualizando programa:', program.name);
       const result = await programService.updateProgram(program);
       if (result.success && result.data) {
-        setPrograms(prev => prev.map(p => p.id === program.id ? result.data! : p));
+        const updatedPrograms = programs.map(p => p.id === program.id ? result.data! : p);
+        setPrograms(updatedPrograms);
+        // Actualizar servicio global con los nuevos programas
+        globalPlaybackService.updatePrograms(updatedPrograms);
         console.log('✅ Programa actualizado');
         return result.data;
       }
@@ -102,6 +118,32 @@ function App() {
     deleteProgram
   } = usePrograms();
 
+  const [globalPlaybackStatus, setGlobalPlaybackStatus] = useState<{
+    isRunning: boolean;
+    activePrograms: number;
+    activeZones: number;
+    totalContent: number;
+  }>({
+    isRunning: false,
+    activePrograms: 0,
+    activeZones: 0,
+    totalContent: 0
+  });
+
+  // Actualizar estado del servicio global cada 5 segundos
+  useEffect(() => {
+    const updateStatus = () => {
+      const globalPlaybackService = GlobalPlaybackService.getInstance();
+      const status = globalPlaybackService.getStatus();
+      setGlobalPlaybackStatus(status);
+    };
+
+    updateStatus(); // Actualizar inmediatamente
+    const interval = setInterval(updateStatus, 5000); // Actualizar cada 5 segundos
+
+    return () => clearInterval(interval);
+  }, []);
+
   console.log('🎯 App renderizando:', { isLoaded, programsCount: programs.length, error });
 
   // Mostrar loading mientras se cargan los datos
@@ -141,9 +183,26 @@ function App() {
   // Aplicación principal
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Indicador de estado */}
-      <div className="fixed top-4 right-4 z-50 px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-700 border border-green-200">
-        ✅ Sistema activo
+      {/* Indicador de estado de reproducción global */}
+      <div className="fixed top-4 right-4 z-50 bg-white rounded-lg shadow-lg border border-gray-200 p-3 min-w-[200px]">
+        <div className="flex items-center space-x-2 mb-2">
+          {globalPlaybackStatus.isRunning ? (
+            <>
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-sm font-medium text-green-700">🎬 Contando en segundo plano</span>
+            </>
+          ) : (
+            <>
+              <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
+              <span className="text-sm font-medium text-gray-600">⏸️ Sistema detenido</span>
+            </>
+          )}
+        </div>
+        <div className="text-xs text-gray-500 space-y-1">
+          <div>Programas: {globalPlaybackStatus.activePrograms}</div>
+          <div>Zonas activas: {globalPlaybackStatus.activeZones}</div>
+          <div>Total contenido: {globalPlaybackStatus.totalContent}</div>
+        </div>
       </div>
 
       <Index 
